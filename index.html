@@ -789,31 +789,35 @@ window.PRICE_DATA=[{"c":"P000003983","b":"Baker's Choice","n":"切皮三文治�
     return false;
   }
 
-  function matchQuery(p, q) {
+  function matchQuery(p, q, terms, rawQ) {
     if (!q) return true;
     var hay = haystack(p);
-    if (isExcluded(hay, state.q.trim()) || isExcluded(hay, q)) return false;
-    var terms = expandQuery(state.q.trim());
-    if (!terms.length) terms = [q];
-    for (var i = 0; i < terms.length; i++) {
-      if (hay.indexOf(terms[i]) !== -1) return true;
+    var raw = rawQ != null ? rawQ : state.q.trim();
+    if (isExcluded(hay, raw) || isExcluded(hay, q)) return false;
+    var list = terms;
+    if (!list || !list.length) {
+      list = expandQuery(raw);
+      if (!list.length) list = [q];
+    }
+    for (var i = 0; i < list.length; i++) {
+      if (hay.indexOf(list[i]) !== -1) return true;
     }
     return false;
   }
 
-  function relevanceScore(p, q) {
+  function relevanceScore(p, q, terms, rawQ) {
     if (!q) return 0;
-    var raw = state.q.trim();
+    var raw = rawQ != null ? rawQ : state.q.trim();
     var name = (p.n || "").toLowerCase();
     var c3 = (p.c3 || "").toLowerCase();
     var c2 = (p.c2 || "").toLowerCase();
     var score = 0;
-    var terms = expandQuery(raw);
+    var list = terms && terms.length ? terms : expandQuery(raw);
     if (name.indexOf(q) !== -1) score += 12;
     if (c3.indexOf(q) !== -1) score += 10;
     if (c2.indexOf(q) !== -1) score += 6;
-    for (var i = 0; i < terms.length; i++) {
-      var t = terms[i];
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
       if (name.indexOf(t) !== -1) score += 5;
       if (c3.indexOf(t) !== -1) score += 4;
       if (c2.indexOf(t) !== -1) score += 2;
@@ -824,18 +828,21 @@ window.PRICE_DATA=[{"c":"P000003983","b":"Baker's Choice","n":"切皮三文治�
 
   function filterAll() {
     var q = state.q.trim().toLowerCase();
+    var rawQ = state.q.trim();
+    var terms = q ? expandQuery(rawQ) : [];
+    if (q && !terms.length) terms = [q];
     var stores = activeStoreCodes();
     var out = [];
     for (var i = 0; i < data.length; i++) {
       var p = data[i];
       if (state.cat && p.c1 !== state.cat) continue;
-      if (!matchQuery(p, q)) continue;
+      if (!matchQuery(p, q, terms, rawQ)) continue;
       var prices = filteredPrices(p, stores);
       if (!prices.length) continue;
       var st = stats(prices);
       out.push({ p: p, prices: prices, st: st, offers: offersMap(p) });
     }
-    out.forEach(function (row) { row.rel = relevanceScore(row.p, q); });
+    out.forEach(function (row) { row.rel = relevanceScore(row.p, q, terms, rawQ); });
     if (state.sort === "cheap") {
       out.sort(function (a, b) {
         var r = b.rel - a.rel;
@@ -863,11 +870,13 @@ window.PRICE_DATA=[{"c":"P000003983","b":"Baker's Choice","n":"切皮三文治�
   }
 
   function escapeHtml(s) {
+    // Split entity names so HTML re-serializers cannot turn this into broken JS
+    // (a prior bug decoded " → " and left .replace(/"/g, """); which killed the whole app script).
     return String(s == null ? "" : s)
-      .replace(/&/g, "&")
-      .replace(/</g, "<")
-      .replace(/>/g, ">")
-      .replace(/"/g, """);
+      .replace(/&/g, "&" + "amp;")
+      .replace(/</g, "&" + "lt;")
+      .replace(/>/g, "&" + "gt;")
+      .replace(/"/g, "&" + "quot;");
   }
   function escapeAttr(s) { return escapeHtml(s); }
 
@@ -1009,17 +1018,18 @@ window.PRICE_DATA=[{"c":"P000003983","b":"Baker's Choice","n":"切皮三文治�
 
   function render() {
     updateHktv();
-    var rows = filterAll();
-    var total = rows.length;
     var showTips = !state.q.trim() && !state.cat;
     el.tips.hidden = !showTips;
     if (showTips) {
+      // Skip full-catalog scan/sort until the user searches or picks a category
       el.list.innerHTML = "";
       el.moreWrap.hidden = true;
       el.resultMeta.textContent = "共 " + data.length.toLocaleString("zh-HK") + " 件貨品 · 輸入關鍵字開始格價";
       return;
     }
 
+    var rows = filterAll();
+    var total = rows.length;
     var slice = rows.slice(0, state.limit);
     if (!slice.length) {
       el.list.innerHTML = '<div class="empty">搵唔到符合條件嘅貨品。<br>試吓改關鍵字、大類或超市篩選。</div>';
